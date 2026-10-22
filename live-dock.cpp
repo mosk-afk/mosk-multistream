@@ -22,6 +22,7 @@
 #include <QJsonObject>
 #include <QMessageBox>
 #include <QRandomGenerator>
+#include <QScrollArea>
 #include <QTimer>
 #include <QUrl>
 #include <QUrlQuery>
@@ -240,13 +241,23 @@ LiveDock::LiveDock(QWidget *parent, ChatDock *chat_, MultistreamDock *multistrea
 	liveRow->addWidget(titleButton);
 	liveRow->addWidget(endButton);
 
+	// Accounts scroll so the buttons stay put however many are linked.
+	auto accountsWidget = new QWidget;
+	accountsLayout->setContentsMargins(0, 0, 0, 0);
+	accountsLayout->setAlignment(Qt::AlignTop);
+	accountsWidget->setLayout(accountsLayout);
+	auto scroll = new QScrollArea;
+	scroll->setWidget(accountsWidget);
+	scroll->setWidgetResizable(true);
+	scroll->setFrameShape(QFrame::NoFrame);
+	scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+
 	auto layout = new QVBoxLayout(this);
 	layout->setContentsMargins(4, 4, 4, 4);
-	layout->addLayout(accountsLayout);
+	layout->addWidget(scroll, 1);
 	layout->addLayout(addRow);
 	layout->addLayout(liveRow);
 	layout->addWidget(statusLabel);
-	layout->addStretch(1);
 
 	connect(addYt, &QPushButton::clicked, [this] { Login("yt"); });
 	connect(addKick, &QPushButton::clicked, [this] { Login("kick"); });
@@ -383,22 +394,27 @@ void LiveDock::Rebuild()
 
 	for (size_t i = 0; i < accounts.size(); i++) {
 		auto &a = accounts[i];
+		// One line per account: [x] YT name [title........] [Public] X
 		auto row = new QWidget;
-		auto rowLayout = new QVBoxLayout(row);
-		rowLayout->setContentsMargins(0, 2, 0, 2);
-		auto top = new QHBoxLayout;
+		auto top = new QHBoxLayout(row);
+		top->setContentsMargins(0, 1, 0, 1);
 		auto check = new QCheckBox;
 		check->setChecked(a.live);
 		check->setToolTip("Include in Go Live");
 		auto label = new QLabel(QString("<b style='color:%1'>%2</b> %3")
 						.arg(a.platform == "yt" ? "#ff3d3d" : "#53fc18",
-						     a.platform == "yt" ? "YouTube" : "Kick", a.name.toHtmlEscaped()));
+						     a.platform == "yt" ? "YT" : "K", a.name.toHtmlEscaped()));
+		label->setMaximumWidth(110);
+		label->setToolTip((a.platform == "yt" ? "YouTube: " : "Kick: ") + a.name);
+		auto title = new QLineEdit(a.title);
+		title->setPlaceholderText("Stream title");
 		auto remove = new QPushButton("X");
 		remove->setFixedWidth(28);
 		remove->setStyleSheet("padding: 0px;"); // OBS theme padding otherwise hides the text
 		remove->setToolTip("Unlink account");
 		top->addWidget(check);
-		top->addWidget(label, 1);
+		top->addWidget(label);
+		top->addWidget(title, 1);
 		QComboBox *privacy = nullptr;
 		if (a.platform == "yt") {
 			privacy = new QComboBox;
@@ -411,10 +427,6 @@ void LiveDock::Rebuild()
 			connect(privacy, &QComboBox::currentIndexChanged, [this] { Save(); });
 		}
 		top->addWidget(remove);
-		auto title = new QLineEdit(a.title);
-		title->setPlaceholderText("Stream title");
-		rowLayout->addLayout(top);
-		rowLayout->addWidget(title);
 		accountsLayout->addWidget(row);
 		titleEdits.push_back(title);
 		liveChecks.push_back(check);
