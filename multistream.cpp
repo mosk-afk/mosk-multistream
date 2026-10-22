@@ -1,3 +1,4 @@
+#include "chat-dock.hpp"
 #include "config-utils.hpp"
 #include "multistream.hpp"
 #include "obs-module.h"
@@ -8,6 +9,7 @@
 #include <QLabel>
 #include <QMainWindow>
 #include <QMessageBox>
+#include <QPointer>
 #include <QPushButton>
 #include <QScrollArea>
 #include <QVBoxLayout>
@@ -23,6 +25,7 @@ OBS_MODULE_AUTHOR("mosk (fork of Aitum Multistream)");
 OBS_MODULE_USE_DEFAULT_LOCALE("mosk-multistream", "en-US")
 
 static MultistreamDock *multistream_dock = nullptr;
+static QPointer<ChatDock> chat_dock;
 
 update_info_t *version_update_info = nullptr;
 
@@ -55,6 +58,8 @@ bool obs_module_load(void)
 	const auto main_window = static_cast<QMainWindow *>(obs_frontend_get_main_window());
 	multistream_dock = new MultistreamDock(main_window);
 	obs_frontend_add_dock_by_id("MoskMultistreamDock", obs_module_text("AitumMultistream"), multistream_dock);
+	chat_dock = new ChatDock(main_window);
+	obs_frontend_add_dock_by_id("MoskChatDock", "YouTube + Kick Chat", chat_dock);
 
 	// ponytail: Aitum update check removed (it pinged api.aitum.tv and nagged to install Aitum); pull upstream manually
 	return true;
@@ -81,6 +86,9 @@ void obs_module_unload()
 	}
 	if (multistream_dock) {
 		delete multistream_dock;
+	}
+	if (chat_dock) {
+		chat_dock->Stop();
 	}
 }
 
@@ -141,26 +149,6 @@ auto outputGroupStyle = QString("background-color: %1; padding: 0px;")
 				.arg(QPalette().color(QPalette::ColorRole::Mid).name(QColor::HexRgb)); // wrapper around above
 
 auto outputPlatformIconSize = 36;
-
-// For showing warning for no vertical integration
-void showVerticalWarning(QVBoxLayout *verticalLayout)
-{
-	auto verticalWarning = new QWidget;
-	verticalWarning->setContentsMargins(0, 0, 0, 0);
-
-	auto verticalWarningLayout = new QVBoxLayout;
-	verticalWarningLayout->setContentsMargins(0, 0, 0, 0);
-
-	auto label = new QLabel(QString::fromUtf8(obs_module_text("NoVerticalWarning")));
-	label->setStyleSheet(QString("padding: 0px;"));
-	label->setWordWrap(true);
-	label->setTextFormat(Qt::RichText);
-	label->setOpenExternalLinks(true);
-	verticalWarningLayout->addWidget(label);
-	verticalWarning->setLayout(verticalWarningLayout);
-
-	verticalLayout->addWidget(verticalWarning);
-}
 
 config_t *get_user_config(void)
 {
@@ -359,24 +347,6 @@ MultistreamDock::MultistreamDock(QWidget *parent) : QFrame(parent)
 	});
 
 	buttonRow->addWidget(configButton);
-
-	// Contribute Button
-	auto contributeButton = new QPushButton;
-	contributeButton->setMinimumHeight(30);
-	contributeButton->setIcon(ConfigUtils::generateEmojiQIcon("❤️"));
-	contributeButton->setToolTip(QString::fromUtf8(obs_module_text("AitumMultistreamDonate")));
-	QPushButton::connect(contributeButton, &QPushButton::clicked,
-			     [] { QDesktopServices::openUrl(QUrl("https://aitum.tv/contribute")); });
-	buttonRow->addWidget(contributeButton);
-
-	// Aitum Button
-	auto aitumButton = new QPushButton;
-	aitumButton->setMinimumHeight(30);
-	//aitumButton->setSizePolicy(sp2);
-	aitumButton->setIcon(QIcon(":/aitum/media/aitum.png"));
-	aitumButton->setToolTip(QString::fromUtf8("https://aitum.tv"));
-	QPushButton::connect(aitumButton, &QPushButton::clicked, [] { QDesktopServices::openUrl(QUrl("https://aitum.tv")); });
-	buttonRow->addWidget(aitumButton);
 
 	mainLayout->addLayout(buttonRow);
 
@@ -1238,9 +1208,6 @@ void MultistreamDock::LoadVerticalOutputs(bool firstLoad)
 	struct calldata cd;
 	calldata_init(&cd);
 	if (!proc_handler_call(ph, "aitum_vertical_get_stream_settings", &cd)) {
-		if (firstLoad) {                                         // only display warning on first load
-			showVerticalWarning(verticalCanvasOutputLayout); // show warning
-		}
 		calldata_free(&cd);
 		return;
 	}

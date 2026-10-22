@@ -81,14 +81,6 @@ OBSBasicSettings::OBSBasicSettings(QMainWindow *parent) : QDialog(parent)
 	listwidgetitem->setText(QString::fromUtf8(obs_module_text("SetupTroubleshooter")));
 	listwidgetitem->setHidden(true);
 
-	listwidgetitem = new QListWidgetItem(listWidget);
-	listwidgetitem->setIcon(main_window->property("defaultIcon").value<QIcon>());
-	listwidgetitem->setText(QString::fromUtf8(obs_module_text("Help")));
-
-	listwidgetitem = new QListWidgetItem(listWidget);
-	listwidgetitem->setIcon(QIcon(QString::fromUtf8(":/aitum/media/aitum.png")));
-	listwidgetitem->setText(QString::fromUtf8(obs_module_text("SupportButton")));
-
 	listWidget->setCurrentRow(0);
 	listWidget->setSpacing(1);
 
@@ -119,15 +111,9 @@ OBSBasicSettings::OBSBasicSettings(QMainWindow *parent) : QDialog(parent)
 							    QIcon(QString::fromUtf8(":/settings/images/settings/stream.svg")));
 	generalVerticalButton = ConfigUtils::generateMenuButton(QString::fromUtf8(obs_module_text("SettingsVerticalOutputsButton")),
 								QIcon(QString::fromUtf8(":/settings/images/settings/stream.svg")));
-	generalHelpButton = ConfigUtils::generateMenuButton(QString::fromUtf8(obs_module_text("SettingsHelpButton")),
-							    main_window->property("defaultIcon").value<QIcon>());
-	generalSupportAitumButton = ConfigUtils::generateMenuButton(QString::fromUtf8(obs_module_text("SupportButton")),
-								    QIcon(QString::fromUtf8(":/aitum/media/aitum.png")));
 
 	buttonLayout->addWidget(generalMainButton, 0);
 	buttonLayout->addWidget(generalVerticalButton, 0);
-	buttonLayout->addWidget(generalHelpButton, 0);
-	buttonLayout->addWidget(generalSupportAitumButton, 0);
 
 	buttonGroupBox->setLayout(buttonLayout);
 
@@ -173,31 +159,6 @@ OBSBasicSettings::OBSBasicSettings(QMainWindow *parent) : QDialog(parent)
 	scrollArea->setWidgetResizable(true);
 	scrollArea->setLineWidth(0);
 	scrollArea->setFrameShape(QFrame::NoFrame);
-	settingsPages->addWidget(scrollArea);
-
-	// Help page
-	auto helpPage = new QWidget;
-	auto helpPageLayout = new QVBoxLayout;
-	helpPage->setLayout(helpPageLayout);
-	scrollArea = new QScrollArea;
-	scrollArea->setWidget(helpPage);
-	scrollArea->setWidgetResizable(true);
-	scrollArea->setLineWidth(0);
-	scrollArea->setFrameShape(QFrame::NoFrame);
-
-	auto helpInfoBox = ConfigUtils::generateSettingsGroupBox(QString::fromUtf8(obs_module_text("HelpTitle")));
-	helpInfoBox->setStyleSheet("padding-top: 12px");
-	auto helpLayout = new QVBoxLayout;
-	helpInfoBox->setLayout(helpLayout);
-
-	auto helpLabel = new QLabel(QString::fromUtf8(obs_module_text("HelpText")));
-	helpLabel->setStyleSheet("font-size: 14px");
-	helpLabel->setWordWrap(true);
-	helpLabel->setTextFormat(Qt::RichText);
-	helpLabel->setOpenExternalLinks(true);
-	helpLayout->addWidget(helpLabel, 1);
-	helpPageLayout->addWidget(helpInfoBox, 1, Qt::AlignTop);
-
 	settingsPages->addWidget(scrollArea);
 
 	//mainOutputsPage
@@ -353,30 +314,7 @@ OBSBasicSettings::OBSBasicSettings(QMainWindow *parent) : QDialog(parent)
 
 	verticalOutputsPage->setLayout(verticalOutputsLayout);
 
-	// Support page
-	QWidget *supportPage = new QWidget;
-	auto supportPageLayout = new QVBoxLayout;
-	supportPage->setLayout(supportPageLayout);
-
-	auto supportInfoBox = ConfigUtils::generateSettingsGroupBox(QString::fromUtf8(obs_module_text("SupportTitle")));
-	supportInfoBox->setStyleSheet("padding-top: 12px");
-	auto supportLayout = new QVBoxLayout;
-	supportInfoBox->setLayout(supportLayout);
-
-	auto supportLabel = new QLabel(QString::fromUtf8(obs_module_text("SupportText")));
-	supportLabel->setStyleSheet("font-size: 14px");
-	supportLabel->setWordWrap(true);
-	supportLabel->setTextFormat(Qt::RichText);
-	supportLabel->setOpenExternalLinks(true);
-	supportLayout->addWidget(supportLabel, 1);
-	supportPageLayout->addWidget(supportInfoBox, 1, Qt::AlignTop);
-
-	settingsPages->addWidget(supportPage);
-
-	///
-	const auto version =
-		new QLabel(QString::fromUtf8(obs_module_text("Version")) + " " + QString::fromUtf8(PROJECT_VERSION) + " " +
-			   QString::fromUtf8(obs_module_text("MadeBy")) + " <a href=\"https://aitum.tv\">Aitum</a>");
+	const auto version = new QLabel(QString::fromUtf8(obs_module_text("Version")) + " " + QString::fromUtf8(PROJECT_VERSION));
 	version->setOpenExternalLinks(true);
 	version->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
 
@@ -415,10 +353,6 @@ OBSBasicSettings::OBSBasicSettings(QMainWindow *parent) : QDialog(parent)
 	connect(generalMainButton, &QPushButton::clicked, [this] { listWidget->setCurrentRow(1); });
 
 	connect(generalVerticalButton, &QPushButton::clicked, [this] { listWidget->setCurrentRow(2); });
-
-	connect(generalHelpButton, &QPushButton::clicked, [this] { listWidget->setCurrentRow(listWidget->count() - 2); });
-
-	connect(generalSupportAitumButton, &QPushButton::clicked, [this] { listWidget->setCurrentRow(listWidget->count() - 1); });
 }
 
 OBSBasicSettings::~OBSBasicSettings()
