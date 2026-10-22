@@ -33,16 +33,16 @@
     },
     "platformConfig": {
         "macos": {
-            "bundleId": "tv.aitum.multi"
+            "bundleId": "tv.mosk.multi"
         }
     },
-    "name": "aitum-multistream",
-    "displayName": "Aitum Multistream",
+    "name": "mosk-multistream",
+    "displayName": "Mosk Multistream",
     "version": "1.0.9",
-    "author": "Aitum",
-    "website": "https://aitum.tv",
-    "email": "support@aitum.tv",
+    "author": "mosk",
+    "website": "https://github.com/mosk-afk/mosk-multistream",
+    "email": "",
     "uuids": {
-        "windowsApp": "7E8814F2-03EE-4E2E-8062-A9A184EC0618"
+        "windowsApp": "FA9AB3F6-496D-41D8-99DF-A9EED96C2A07"
     }
 }

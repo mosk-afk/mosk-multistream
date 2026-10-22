@@ -19,8 +19,8 @@ extern "C" {
 }
 
 OBS_DECLARE_MODULE()
-OBS_MODULE_AUTHOR("Aitum");
-OBS_MODULE_USE_DEFAULT_LOCALE("aitum-multistream", "en-US")
+OBS_MODULE_AUTHOR("mosk (fork of Aitum Multistream)");
+OBS_MODULE_USE_DEFAULT_LOCALE("mosk-multistream", "en-US")
 
 static MultistreamDock *multistream_dock = nullptr;
 
@@ -47,32 +47,23 @@ bool version_info_downloaded(void *param, struct file_download_data *file)
 bool obs_module_load(void)
 {
 	if (obs_get_module("aitum-stream-suite")) {
-		blog(LOG_ERROR, "[Aitum Multistream] Aitum Stream Suite detected, please uninstall it to use Aitum Multistream.");
+		blog(LOG_ERROR, "[Mosk Multistream] Aitum Stream Suite detected, please uninstall it to use Aitum Multistream.");
 		return false;
 	}
-	blog(LOG_INFO, "[Aitum-Multistream] loaded version %s", PROJECT_VERSION);
+	blog(LOG_INFO, "[Mosk Multistream] loaded version %s", PROJECT_VERSION);
 
 	const auto main_window = static_cast<QMainWindow *>(obs_frontend_get_main_window());
 	multistream_dock = new MultistreamDock(main_window);
-	obs_frontend_add_dock_by_id("AitumMultistreamDock", obs_module_text("AitumMultistream"), multistream_dock);
+	obs_frontend_add_dock_by_id("MoskMultistreamDock", obs_module_text("AitumMultistream"), multistream_dock);
 
-	std::string url = "https://api.aitum.tv/plugin/multi?version=" PROJECT_VERSION;
-	const char *pguid = config_get_string(obs_frontend_get_app_config(), "General", "InstallGUID");
-	if (pguid) {
-		url += "&uuid=";
-		url += pguid;
-	}
-
-
-	version_update_info =
-		update_info_create_single("[Aitum Multistream]", "OBS", url.c_str(), version_info_downloaded, nullptr);
+	// ponytail: Aitum update check removed (it pinged api.aitum.tv and nagged to install Aitum); pull upstream manually
 	return true;
 }
 
 void obs_module_post_load()
 {
 	if (obs_get_module("aitum-stream-suite")) {
-		obs_frontend_remove_dock("AitumMultistreamDock");
+		obs_frontend_remove_dock("MoskMultistreamDock");
 		if (multistream_dock) {
 			multistream_dock->deleteLater();
 		}
@@ -568,9 +559,9 @@ void MultistreamDock::LoadSettingsFile()
 	bfree(path);
 	if (!config) {
 		config = obs_data_create();
-		blog(LOG_WARNING, "[Aitum Multistream] No configuration file loaded");
+		blog(LOG_WARNING, "[Mosk Multistream] No configuration file loaded");
 	} else {
-		blog(LOG_INFO, "[Aitum Multistream] Loaded configuration file");
+		blog(LOG_INFO, "[Mosk Multistream] Loaded configuration file");
 	}
 	partnerBlockTime = obs_data_get_int(config, "partner_block");
 
@@ -596,7 +587,7 @@ void MultistreamDock::LoadSettingsFile()
 		current_config = obs_data_create();
 		obs_data_set_string(current_config, "name", profile);
 		bfree(profile);
-		blog(LOG_INFO, "[Aitum Multistream] profile not found");
+		blog(LOG_INFO, "[Mosk Multistream] profile not found");
 		LoadSettings();
 		return;
 	}
@@ -736,7 +727,7 @@ void MultistreamDock::LoadOutput(obs_data_t *output_data, bool vertical)
 	} else {
 		connect(streamButton, &QPushButton::clicked, [this, streamButton, output_data] {
 			if (streamButton->isChecked()) {
-				blog(LOG_INFO, "[Aitum Multistream] start stream clicked '%s'",
+				blog(LOG_INFO, "[Mosk Multistream] start stream clicked '%s'",
 				     obs_data_get_string(output_data, "name"));
 				if (!StartOutput(output_data, streamButton)) {
 					streamButton->setChecked(false);
@@ -755,7 +746,7 @@ void MultistreamDock::LoadOutput(obs_data_t *output_data, bool vertical)
 					}
 				}
 				if (stop) {
-					blog(LOG_INFO, "[Aitum Multistream] stop stream clicked '%s'",
+					blog(LOG_INFO, "[Mosk Multistream] stop stream clicked '%s'",
 					     obs_data_get_string(output_data, "name"));
 					const char *name2 = obs_data_get_string(output_data, "name");
 					for (auto it = outputs.begin(); it != outputs.end(); it++) {
@@ -822,7 +813,7 @@ void MultistreamDock::SaveSettings()
 	if (!config) {
 		ensure_directory(path);
 		config = obs_data_create();
-		blog(LOG_WARNING, "[Aitum Multistream] New configuration file");
+		blog(LOG_WARNING, "[Mosk Multistream] New configuration file");
 	}
 	obs_data_set_int(config, "partner_block", partnerBlockTime);
 	auto profiles = obs_data_get_array(config, "profiles");
@@ -861,9 +852,9 @@ void MultistreamDock::SaveSettings()
 	obs_data_release(pd);
 
 	if (obs_data_save_json_safe(config, path, "tmp", "bak")) {
-		blog(LOG_INFO, "[Aitum Multistream] Saved settings");
+		blog(LOG_INFO, "[Mosk Multistream] Saved settings");
 	} else {
-		blog(LOG_ERROR, "[Aitum Multistream] Failed saving settings");
+		blog(LOG_ERROR, "[Mosk Multistream] Failed saving settings");
 	}
 	obs_data_release(config);
 	bfree(path);
@@ -913,7 +904,7 @@ bool MultistreamDock::StartOutput(obs_data_t *settings, QPushButton *streamButto
 			auto main_output = obs_frontend_get_streaming_output();
 			if (!obs_output_active(main_output)) {
 				obs_output_release(main_output);
-				blog(LOG_WARNING, "[Aitum Multistream] failed to start stream '%s' because main was not started",
+				blog(LOG_WARNING, "[Mosk Multistream] failed to start stream '%s' because main was not started",
 				     obs_data_get_string(settings, "name"));
 				QMessageBox::warning(this, QString::fromUtf8(obs_module_text("MainOutputNotActive")),
 						     QString::fromUtf8(obs_module_text("MainOutputNotActive")));
@@ -924,7 +915,7 @@ bool MultistreamDock::StartOutput(obs_data_t *settings, QPushButton *streamButto
 			obs_output_release(main_output);
 			if (!venc) {
 				blog(LOG_WARNING,
-				     "[Aitum Multistream] failed to start stream '%s' because encoder index %d was not found",
+				     "[Mosk Multistream] failed to start stream '%s' because encoder index %d was not found",
 				     obs_data_get_string(settings, "name"), vei);
 				QMessageBox::warning(this, QString::fromUtf8(obs_module_text("MainOutputEncoderIndexNotFound")),
 						     QString::fromUtf8(obs_module_text("MainOutputEncoderIndexNotFound")));
@@ -938,7 +929,7 @@ bool MultistreamDock::StartOutput(obs_data_t *settings, QPushButton *streamButto
 				obs_data_apply(s, ves);
 				obs_data_release(ves);
 			}
-			std::string video_encoder_name = "aitum_multi_video_encoder_";
+			std::string video_encoder_name = "mosk_multi_video_encoder_";
 			video_encoder_name += name;
 			venc = obs_video_encoder_create(venc_name, video_encoder_name.c_str(), s, nullptr);
 			obs_data_release(s);
@@ -961,7 +952,7 @@ bool MultistreamDock::StartOutput(obs_data_t *settings, QPushButton *streamButto
 			auto main_output = obs_frontend_get_streaming_output();
 			if (!obs_output_active(main_output)) {
 				obs_output_release(main_output);
-				blog(LOG_WARNING, "[Aitum Multistream] failed to start stream '%s' because main was not started",
+				blog(LOG_WARNING, "[Mosk Multistream] failed to start stream '%s' because main was not started",
 				     obs_data_get_string(settings, "name"));
 				QMessageBox::warning(this, QString::fromUtf8(obs_module_text("MainOutputNotActive")),
 						     QString::fromUtf8(obs_module_text("MainOutputNotActive")));
@@ -972,7 +963,7 @@ bool MultistreamDock::StartOutput(obs_data_t *settings, QPushButton *streamButto
 			obs_output_release(main_output);
 			if (!aenc) {
 				blog(LOG_WARNING,
-				     "[Aitum Multistream] failed to start stream '%s' because encoder index %d was not found",
+				     "[Mosk Multistream] failed to start stream '%s' because encoder index %d was not found",
 				     obs_data_get_string(settings, "name"), aei);
 				QMessageBox::warning(this, QString::fromUtf8(obs_module_text("MainOutputEncoderIndexNotFound")),
 						     QString::fromUtf8(obs_module_text("MainOutputEncoderIndexNotFound")));
@@ -986,7 +977,7 @@ bool MultistreamDock::StartOutput(obs_data_t *settings, QPushButton *streamButto
 				obs_data_apply(s, aes);
 				obs_data_release(aes);
 			}
-			std::string audio_encoder_name = "aitum_multi_audio_encoder_";
+			std::string audio_encoder_name = "mosk_multi_audio_encoder_";
 			audio_encoder_name += name;
 			aenc = obs_audio_encoder_create(aenc_name, audio_encoder_name.c_str(), s,
 							obs_data_get_int(settings, "audio_track"), nullptr);
@@ -998,7 +989,7 @@ bool MultistreamDock::StartOutput(obs_data_t *settings, QPushButton *streamButto
 		venc = main_output ? obs_output_get_video_encoder(main_output) : nullptr;
 		if (!venc || !obs_output_active(main_output)) {
 			obs_output_release(main_output);
-			blog(LOG_WARNING, "[Aitum Multistream] failed to start stream '%s' because main was not started",
+			blog(LOG_WARNING, "[Mosk Multistream] failed to start stream '%s' because main was not started",
 			     obs_data_get_string(settings, "name"));
 			QMessageBox::warning(this, QString::fromUtf8(obs_module_text("MainOutputNotActive")),
 					     QString::fromUtf8(obs_module_text("MainOutputNotActive")));
@@ -1036,7 +1027,7 @@ bool MultistreamDock::StartOutput(obs_data_t *settings, QPushButton *streamButto
 	//use_auth
 	//username
 	//password
-	std::string service_name = "aitum_multi_service_";
+	std::string service_name = "mosk_multi_service_";
 	service_name += name;
 	auto service = obs_service_create(whip ? "whip_custom" : "rtmp_custom", service_name.c_str(), s, nullptr);
 	obs_data_release(s);
@@ -1050,7 +1041,7 @@ bool MultistreamDock::StartOutput(obs_data_t *settings, QPushButton *streamButto
 			type = "ffmpeg_mpegts_muxer";
 		}
 	}
-	std::string output_name = "aitum_multi_output_";
+	std::string output_name = "mosk_multi_output_";
 	output_name += name;
 	auto output = obs_output_create(type, output_name.c_str(), nullptr, nullptr);
 	obs_output_set_service(output, service);
@@ -1362,9 +1353,9 @@ void MultistreamDock::AskUpdate()
 		}
 		obs_data_set_int(config, "skip_version", sv);
 		if (obs_data_save_json_safe(config, path, "tmp", "bak")) {
-			blog(LOG_INFO, "[Aitum Multistream] Saved settings");
+			blog(LOG_INFO, "[Mosk Multistream] Saved settings");
 		} else {
-			blog(LOG_ERROR, "[Aitum Multistream] Failed saving settings");
+			blog(LOG_ERROR, "[Mosk Multistream] Failed saving settings");
 		}
 	}
 	obs_data_release(config);
@@ -1376,9 +1367,9 @@ void MultistreamDock::LoadWebsocket()
 	if (vendor) {
 		return;
 	}
-	vendor = obs_websocket_register_vendor("aitum-multistream");
+	vendor = obs_websocket_register_vendor("mosk-multistream");
 	if (!vendor) {
-		blog(LOG_ERROR, "[Aitum Multistream] Failed to register websocket vendor");
+		blog(LOG_ERROR, "[Mosk Multistream] Failed to register websocket vendor");
 		return;
 	}
 	obs_websocket_vendor_register_request(vendor, "version", vendor_request_version, this);
