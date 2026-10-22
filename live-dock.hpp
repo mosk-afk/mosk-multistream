@@ -55,6 +55,7 @@ private:
 	void Run(std::function<void()> work);
 	void SetBusy(bool busy, const QString &status);
 	void Merge(const std::vector<Account> &updated);
+	void FollowAccounts();
 
 	ChatDock *chat;
 	MultistreamDock *multistream;

@@ -259,6 +259,25 @@ LiveDock::LiveDock(QWidget *parent, ChatDock *chat_, MultistreamDock *multistrea
 	obs_frontend_add_event_callback(FrontendEvent, this);
 	Load();
 	Rebuild();
+	FollowAccounts();
+}
+
+// Off air, chat follows the linked channels (ticked ones first); Go Live points it at the live broadcast instead.
+void LiveDock::FollowAccounts()
+{
+	if (accounts.empty() || obs_frontend_streaming_active())
+		return;
+	QString yt, kick;
+	for (int pass = 0; pass < 2; pass++)
+		for (auto &a : accounts) {
+			if (pass == 0 && !a.live)
+				continue;
+			if (a.platform == "yt" && yt.isEmpty())
+				yt = a.channel;
+			if (a.platform == "kick" && kick.isEmpty())
+				kick = a.channel;
+		}
+	chat->SetChannels(yt, kick);
 }
 
 LiveDock::~LiveDock()
@@ -280,6 +299,9 @@ void LiveDock::FrontendEvent(enum obs_frontend_event event, void *param)
 			for (auto &name : d->startedOutputs)
 				d->multistream->SetOutputActive(name.c_str(), true);
 		});
+	} else if (event == OBS_FRONTEND_EVENT_STREAMING_STOPPED) {
+		d->liveIds.clear();
+		d->FollowAccounts();
 	} else if (event == OBS_FRONTEND_EVENT_EXIT) {
 		d->running = false;
 		if (d->worker.joinable())
@@ -411,6 +433,7 @@ void LiveDock::Rebuild()
 			privacyBoxes.clear();
 			Save();
 			Rebuild();
+			FollowAccounts();
 		});
 	}
 }
@@ -533,6 +556,7 @@ QByteArray LiveDock::HandleAuth(const QByteArray &path)
 					return;
 				}
 				Merge({a});
+				FollowAccounts();
 				statusLabel->setText("Linked " + a.name);
 			},
 			Qt::QueuedConnection);
@@ -699,6 +723,8 @@ void LiveDock::EndLive()
 	startedOutputs.clear();
 	liveIds.clear();
 	if (obs_frontend_streaming_active())
-		obs_frontend_streaming_stop();
+		obs_frontend_streaming_stop(); // chat switches back on STREAMING_STOPPED
+	else
+		FollowAccounts();
 	statusLabel->setText("Stream ended.");
 }

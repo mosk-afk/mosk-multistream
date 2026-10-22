@@ -229,6 +229,8 @@ void ChatDock::Start()
 
 void ChatDock::SetChannels(const QString &youtube, const QString &kick)
 {
+	if (running && ytEdit->text() == youtube && kickEdit->text() == kick)
+		return;
 	if (running)
 		Stop();
 	ytEdit->setText(youtube);
