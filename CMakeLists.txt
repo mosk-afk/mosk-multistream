@@ -25,8 +25,8 @@ else()
   target_link_libraries(${PROJECT_NAME} PRIVATE OBS::frontend-api)
 endif()
 
-find_package(Qt6 COMPONENTS Widgets Core)
-target_link_libraries(${PROJECT_NAME} PRIVATE Qt6::Core Qt6::Widgets)
+find_package(Qt6 COMPONENTS Widgets Core Network)
+target_link_libraries(${PROJECT_NAME} PRIVATE Qt6::Core Qt6::Widgets Qt6::Network)
 if((OS_LINUX OR OS_FREEBSD OR OS_OPENBSD) AND Qt6_VERSION VERSION_LESS "6.9.0")
 	find_package(Qt6 COMPONENTS GuiPrivate)
 	target_link_libraries(${PROJECT_NAME} PRIVATE Qt::GuiPrivate)
@@ -47,7 +47,7 @@ if(BUILD_OUT_OF_TREE)
 endif()
 target_link_libraries(${PROJECT_NAME} PRIVATE CURL::libcurl)
 # ponytail: chat dock uses WinHTTP websockets, so this fork is Windows-only
-target_link_libraries(${PROJECT_NAME} PRIVATE winhttp)
+target_link_libraries(${PROJECT_NAME} PRIVATE winhttp crypt32)
 
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/version.h.in ${CMAKE_CURRENT_SOURCE_DIR}/version.h)
 
@@ -63,6 +63,11 @@ target_sources(${PROJECT_NAME} PRIVATE
   multistream.cpp
   chat-dock.cpp
   chat-dock.hpp
+  browser-panel.hpp
+  live-dock.cpp
+  live-dock.hpp
+  net.cpp
+  net.hpp
   file-updater.c
 	resources.qrc
 	config-dialog.hpp

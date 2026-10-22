@@ -1,4 +1,5 @@
 #include "chat-dock.hpp"
+#include "live-dock.hpp"
 #include "config-utils.hpp"
 #include "multistream.hpp"
 #include "obs-module.h"
@@ -60,6 +61,7 @@ bool obs_module_load(void)
 	obs_frontend_add_dock_by_id("MoskMultistreamDock", obs_module_text("AitumMultistream"), multistream_dock);
 	chat_dock = new ChatDock(main_window);
 	obs_frontend_add_dock_by_id("MoskChatDock", "YouTube + Kick Chat", chat_dock);
+	obs_frontend_add_dock_by_id("MoskLiveDock", "Mosk Live", new LiveDock(main_window, chat_dock, multistream_dock));
 
 	// ponytail: Aitum update check removed (it pinged api.aitum.tv and nagged to install Aitum); pull upstream manually
 	return true;
@@ -67,6 +69,8 @@ bool obs_module_load(void)
 
 void obs_module_post_load()
 {
+	if (chat_dock)
+		chat_dock->InitBrowser();
 	if (obs_get_module("aitum-stream-suite")) {
 		obs_frontend_remove_dock("MoskMultistreamDock");
 		if (multistream_dock) {
@@ -585,6 +589,48 @@ void MultistreamDock::LoadSettings()
 		},
 		this);
 	obs_data_array_release(outputs2);
+}
+
+void MultistreamDock::UpsertOutput(const char *name, const char *server, const char *key)
+{
+	if (!current_config)
+		return;
+	obs_data_array_t *list = obs_data_get_array(current_config, "outputs");
+	if (!list) {
+		list = obs_data_array_create();
+		obs_data_set_array(current_config, "outputs", list);
+	}
+	obs_data_t *output = nullptr;
+	for (size_t i = 0; i < obs_data_array_count(list) && !output; i++) {
+		obs_data_t *item = obs_data_array_item(list, i);
+		if (strcmp(obs_data_get_string(item, "name"), name) == 0)
+			output = item;
+		else
+			obs_data_release(item);
+	}
+	if (!output) {
+		output = obs_data_create();
+		obs_data_set_string(output, "name", name);
+		obs_data_array_push_back(list, output);
+	}
+	obs_data_set_string(output, "stream_server", server);
+	obs_data_set_string(output, "stream_key", key);
+	obs_data_release(output);
+	obs_data_array_release(list);
+	SaveSettings();
+	LoadSettings();
+}
+
+void MultistreamDock::SetOutputActive(const char *name, bool active)
+{
+	for (int i = 1; i < mainCanvasOutputLayout->count(); i++) {
+		auto w = mainCanvasOutputLayout->itemAt(i)->widget();
+		if (!w || w->objectName() != QString::fromUtf8(name))
+			continue;
+		auto button = w->findChild<QPushButton *>(QStringLiteral("canvasStream"));
+		if (button && button->isChecked() != active)
+			button->click();
+	}
 }
 
 void MultistreamDock::LoadOutput(obs_data_t *output_data, bool vertical)

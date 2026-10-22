@@ -79,6 +79,8 @@ public:
 	~MultistreamDock();
 	void LoadVerticalOutputs(bool firstLoad = true);
 	void LoadWebsocket();
+	void UpsertOutput(const char *name, const char *server, const char *key); // used by the live dock
+	void SetOutputActive(const char *name, bool active);
 };
 
 class AspectRatioPixmapLabel : public QLabel {

@@ -11,5 +11,6 @@
 	<file>media/unknown.png</file>
 	<file>media/youtube.png</file>
 	<file>media/kick.png</file>
+	<file>chat.html</file>
   </qresource>
 </RCC>

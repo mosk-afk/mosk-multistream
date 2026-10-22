@@ -4,65 +4,30 @@
 #include <winhttp.h>
 
 #include "chat-dock.hpp"
-#include <curl/curl.h>
+#include "browser-panel.hpp"
+#include "net.hpp"
 #include <obs-module.h>
 #include <util/platform.h>
-#include <QColor>
 #include <QDateTime>
+#include <QFile>
+#include <QHBoxLayout>
 #include <QJsonArray>
 #include <QJsonDocument>
-#include <QJsonObject>
 #include <QRegularExpression>
-#include <QScrollBar>
-#include <QVBoxLayout>
 #include <algorithm>
 #include <chrono>
 
-#define MAX_MESSAGES 300
-#define UA "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36"
+#define MAX_HISTORY 100
 
 enum { YOUTUBE = 0, KICK = 1 };
-
-static size_t write_cb(char *ptr, size_t size, size_t n, void *out)
-{
-	((std::string *)out)->append(ptr, size * n);
-	return size * n;
-}
-
-static int abort_cb(void *running, curl_off_t, curl_off_t, curl_off_t, curl_off_t)
-{
-	return ((std::atomic<bool> *)running)->load() ? 0 : 1;
-}
 
 // GET, or POST when json_body is set. Aborts as soon as running goes false.
 static bool http(std::atomic<bool> &running, const std::string &url, std::string &out, const std::string &json_body = "")
 {
-	out.clear();
-	CURL *c = curl_easy_init();
-	if (!c)
-		return false;
-	struct curl_slist *headers = curl_slist_append(nullptr, "Accept-Language: en-US,en");
-	if (!json_body.empty()) {
-		headers = curl_slist_append(headers, "Content-Type: application/json");
-		curl_easy_setopt(c, CURLOPT_POSTFIELDS, json_body.c_str());
-	}
-	curl_easy_setopt(c, CURLOPT_URL, url.c_str());
-	curl_easy_setopt(c, CURLOPT_HTTPHEADER, headers);
-	curl_easy_setopt(c, CURLOPT_USERAGENT, UA);
-	curl_easy_setopt(c, CURLOPT_FOLLOWLOCATION, 1L);
-	curl_easy_setopt(c, CURLOPT_TIMEOUT, 15L);
-	curl_easy_setopt(c, CURLOPT_ACCEPT_ENCODING, "");
-	curl_easy_setopt(c, CURLOPT_WRITEFUNCTION, write_cb);
-	curl_easy_setopt(c, CURLOPT_WRITEDATA, &out);
-	curl_easy_setopt(c, CURLOPT_NOPROGRESS, 0L);
-	curl_easy_setopt(c, CURLOPT_XFERINFOFUNCTION, abort_cb);
-	curl_easy_setopt(c, CURLOPT_XFERINFODATA, &running);
-	long code = 0;
-	bool ok = curl_easy_perform(c) == CURLE_OK;
-	curl_easy_getinfo(c, CURLINFO_RESPONSE_CODE, &code);
-	curl_slist_free_all(headers);
-	curl_easy_cleanup(c);
-	return ok && code == 200;
+	if (json_body.empty())
+		return http_request("GET", url, out, {"Accept-Language: en-US,en"}, "", &running) == 200;
+	return http_request("POST", url, out, {"Accept-Language: en-US,en", "Content-Type: application/json"}, json_body,
+			    &running) == 200;
 }
 
 static void nap(std::atomic<bool> &running, int ms)
@@ -87,15 +52,12 @@ static QJsonObject json(const std::string &s)
 	return QJsonDocument::fromJson(QByteArray::fromStdString(s)).object();
 }
 
-static QString line(int platform, qint64 ts, const QString &author, const QString &color, const QString &body_html)
+static QByteArray compact(const QJsonObject &o)
 {
-	static const char *tag[] = {"<b style='color:#ff3d3d'>YT</b>", "<b style='color:#53fc18'>K</b>"};
-	return QString("<span style='color:gray'>%1</span> %2 <b style='color:%3'>%4</b>: %5")
-		.arg(QDateTime::fromMSecsSinceEpoch(ts).toString("HH:mm"), tag[platform], color, author.toHtmlEscaped(),
-		     body_html);
+	return QJsonDocument(o).toJson(QJsonDocument::Compact);
 }
 
-// "@handle", "handle", channel URL, "UC..." id -> channel /live page. Video links/ids are handled separately.
+// Video links/ids are used as is; "@handle", "handle", channel URL or "UC..." id go through the channel's /live page.
 static std::string youtube_video_id(const std::string &in)
 {
 	for (const char *marker : {"v=", "youtu.be/", "/live/"}) {
@@ -119,6 +81,11 @@ static std::string youtube_live_url(const std::string &in)
 	return "https://www.youtube.com/@" + in + "/live";
 }
 
+static std::string overlay_url(const char *mode)
+{
+	return "http://127.0.0.1:" + std::to_string(CHAT_PORT) + "/?" + mode;
+}
+
 ChatDock::ChatDock(QWidget *parent) : QWidget(parent)
 {
 	ytEdit = new QLineEdit;
@@ -128,19 +95,21 @@ ChatDock::ChatDock(QWidget *parent) : QWidget(parent)
 	connectButton = new QPushButton("Connect");
 	statusLabel = new QLabel;
 	statusLabel->setWordWrap(true);
-	view = new QTextBrowser;
-	view->setOpenLinks(false);
-	view->document()->setMaximumBlockCount(MAX_MESSAGES);
+	auto overlayButton = new QPushButton("Add to scene");
+	overlayButton->setToolTip(QString::fromStdString("Adds a browser source showing the chat on stream\n" +
+							   overlay_url("overlay")));
 
 	auto row = new QHBoxLayout;
 	row->addWidget(kickEdit, 1);
 	row->addWidget(connectButton);
-	auto layout = new QVBoxLayout(this);
-	layout->setContentsMargins(4, 4, 4, 4);
-	layout->addWidget(ytEdit);
-	layout->addLayout(row);
-	layout->addWidget(statusLabel);
-	layout->addWidget(view, 1);
+	auto statusRow = new QHBoxLayout;
+	statusRow->addWidget(statusLabel, 1);
+	statusRow->addWidget(overlayButton);
+	mainLayout = new QVBoxLayout(this);
+	mainLayout->setContentsMargins(4, 4, 4, 4);
+	mainLayout->addWidget(ytEdit);
+	mainLayout->addLayout(row);
+	mainLayout->addLayout(statusRow);
 
 	connect(connectButton, &QPushButton::clicked, [this] {
 		if (running)
@@ -148,6 +117,18 @@ ChatDock::ChatDock(QWidget *parent) : QWidget(parent)
 		else
 			Start();
 	});
+	connect(overlayButton, &QPushButton::clicked, [this] { AddOverlayToScene(); });
+
+	connect(&server, &QTcpServer::newConnection, [this] {
+		while (QTcpSocket *s = server.nextPendingConnection()) {
+			connect(s, &QTcpSocket::disconnected, s, &QObject::deleteLater);
+			connect(s, &QTcpSocket::readyRead, this, [this, s] { HandleRequest(s); });
+		}
+	});
+	if (!server.listen(QHostAddress::LocalHost, CHAT_PORT))
+		statusLabel->setText(QString("Port %1 is busy, chat view unavailable").arg(CHAT_PORT));
+
+	obs_frontend_add_event_callback(FrontendEvent, this);
 
 	char *path = obs_module_config_path("chat.json");
 	obs_data_t *data = obs_data_create_from_json_file_safe(path, "bak");
@@ -163,7 +144,53 @@ ChatDock::ChatDock(QWidget *parent) : QWidget(parent)
 
 ChatDock::~ChatDock()
 {
+	obs_frontend_remove_event_callback(FrontendEvent, this);
 	Stop();
+}
+
+void ChatDock::FrontendEvent(enum obs_frontend_event event, void *param)
+{
+	if (event != OBS_FRONTEND_EVENT_EXIT)
+		return;
+	auto dock = (ChatDock *)param;
+	dock->Stop();
+	if (dock->browser) { // must go before obs-browser shuts CEF down
+		dock->browser->closeBrowser();
+		delete dock->browser;
+		dock->browser = nullptr;
+	}
+}
+
+// obs-browser is only usable after all modules loaded, so this runs from obs_module_post_load.
+void ChatDock::InitBrowser()
+{
+	static QCef *cef = obs_browser_init_panel();
+	if (!cef || browser)
+		return;
+	cef->init_browser();
+	cef->wait_for_browser_init();
+	browser = cef->create_widget(this, overlay_url("dock"), nullptr);
+	mainLayout->addWidget(browser, 1);
+}
+
+void ChatDock::AddOverlayToScene()
+{
+	obs_source_t *scene_source = obs_frontend_get_current_scene();
+	obs_scene_t *scene = obs_scene_from_source(scene_source);
+	obs_source_t *source = obs_get_source_by_name("Mosk Chat");
+	if (!source) {
+		obs_data_t *settings = obs_data_create();
+		obs_data_set_string(settings, "url", overlay_url("overlay").c_str());
+		obs_data_set_int(settings, "width", 500);
+		obs_data_set_int(settings, "height", 800);
+		obs_data_set_string(settings, "css", "body { background-color: rgba(0, 0, 0, 0); margin: 0; overflow: hidden; }");
+		source = obs_source_create("browser_source", "Mosk Chat", settings, nullptr);
+		obs_data_release(settings);
+	}
+	if (scene && source)
+		obs_scene_add(scene, source);
+	obs_source_release(source);
+	obs_source_release(scene_source);
 }
 
 void ChatDock::Start()
@@ -179,8 +206,9 @@ void ChatDock::Start()
 	bfree(path);
 	obs_data_release(data);
 
-	msgs.clear();
-	view->clear();
+	history.clear();
+	config = QJsonObject();
+	Broadcast(R"({"type":"clear"})");
 	status[YOUTUBE].clear();
 	status[KICK].clear();
 	running = true;
@@ -199,6 +227,15 @@ void ChatDock::Start()
 	connectButton->setText("Disconnect");
 }
 
+void ChatDock::SetChannels(const QString &youtube, const QString &kick)
+{
+	if (running)
+		Stop();
+	ytEdit->setText(youtube);
+	kickEdit->setText(kick);
+	Start();
+}
+
 void ChatDock::Stop()
 {
 	running = false;
@@ -215,6 +252,49 @@ void ChatDock::Stop()
 	statusLabel->setText("Disconnected");
 }
 
+void ChatDock::HandleRequest(QTcpSocket *s)
+{
+	if (!s->canReadLine())
+		return;
+	QByteArray path = s->readLine().split(' ').value(1);
+	disconnect(s, &QTcpSocket::readyRead, this, nullptr);
+
+	if (path.startsWith("/auth/") && authHandler) { // OAuth redirect for the live dock
+		QByteArray body = authHandler(path);
+		s->write("HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nConnection: close\r\nContent-Length: " +
+			 QByteArray::number(body.size()) + "\r\n\r\n" + body);
+		s->disconnectFromHost();
+		return;
+	}
+
+	if (path.startsWith("/events")) {
+		s->write("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\n"
+			 "Access-Control-Allow-Origin: *\r\n\r\n");
+		QJsonObject c = config;
+		c["type"] = "config";
+		s->write("data: " + compact(c) + "\n\n");
+		for (auto &m : history)
+			s->write("data: " + m.json + "\n\n");
+		clients.append(s);
+		connect(s, &QTcpSocket::disconnected, this, [this, s] { clients.removeAll(s); });
+		return;
+	}
+
+	QFile file(":/aitum/chat.html");
+	file.open(QIODevice::ReadOnly);
+	QByteArray body = file.readAll();
+	s->write("HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nCache-Control: no-cache\r\n"
+		 "Connection: close\r\nContent-Length: " +
+		 QByteArray::number(body.size()) + "\r\n\r\n" + body);
+	s->disconnectFromHost();
+}
+
+void ChatDock::Broadcast(const QByteArray &json)
+{
+	for (auto s : clients)
+		s->write("data: " + json + "\n\n");
+}
+
 void ChatDock::Post(std::vector<ChatMsg> batch)
 {
 	if (batch.empty())
@@ -226,6 +306,11 @@ void ChatDock::Post(std::vector<ChatMsg> batch)
 void ChatDock::PostStatus(int platform, QString text)
 {
 	QMetaObject::invokeMethod(this, [this, platform, text] { SetStatus(platform, text); }, Qt::QueuedConnection);
+}
+
+void ChatDock::PostConfig(QString key, QString value)
+{
+	QMetaObject::invokeMethod(this, [this, key, value] { SetConfig(key, value); }, Qt::QueuedConnection);
 }
 
 void ChatDock::SetStatus(int platform, const QString &text)
@@ -240,37 +325,29 @@ void ChatDock::SetStatus(int platform, const QString &text)
 	statusLabel->setText(parts.join("  ·  "));
 }
 
+void ChatDock::SetConfig(const QString &key, const QString &value)
+{
+	if (!running || value.isEmpty() || config[key].toString() == value)
+		return;
+	config[key] = value;
+	QJsonObject c = config;
+	c["type"] = "config";
+	Broadcast(compact(c));
+}
+
+// The page orders by ts itself; history is kept ordered so late joiners get the same view.
 void ChatDock::AddMessages(std::vector<ChatMsg> batch)
 {
 	if (!running)
 		return;
-	auto bar = view->verticalScrollBar();
-	bool atBottom = bar->value() >= bar->maximum() - 4;
-
-	std::stable_sort(batch.begin(), batch.end(), [](const ChatMsg &a, const ChatMsg &b) { return a.ts < b.ts; });
-	if (msgs.empty() || batch.front().ts >= msgs.back().ts) {
-		// common case: newer than everything shown, just append
-		for (auto &m : batch) {
-			view->append(m.html);
-			msgs.push_back(std::move(m));
-		}
-	} else {
-		// YouTube polls in batches, so its messages can land before Kick ones already shown: re-render in time order
-		for (auto &m : batch) {
-			auto pos = std::upper_bound(msgs.begin(), msgs.end(), m.ts,
-						    [](qint64 ts, const ChatMsg &x) { return ts < x.ts; });
-			msgs.insert(pos, std::move(m));
-		}
-		if (msgs.size() > MAX_MESSAGES)
-			msgs.erase(msgs.begin(), msgs.end() - MAX_MESSAGES);
-		view->clear();
-		for (auto &m : msgs)
-			view->append(m.html);
+	for (auto &m : batch) {
+		Broadcast(m.json);
+		auto pos = std::upper_bound(history.begin(), history.end(), m.ts,
+					    [](qint64 ts, const ChatMsg &x) { return ts < x.ts; });
+		history.insert(pos, std::move(m));
 	}
-	if (msgs.size() > MAX_MESSAGES)
-		msgs.erase(msgs.begin(), msgs.end() - MAX_MESSAGES);
-	if (atBottom)
-		bar->setValue(bar->maximum());
+	if (history.size() > MAX_HISTORY)
+		history.erase(history.begin(), history.end() - MAX_HISTORY);
 }
 
 // ponytail: unofficial innertube endpoints (what youtube.com itself uses), no API key or quota.
@@ -279,12 +356,18 @@ void ChatDock::YouTubeLoop(std::string input)
 {
 	std::string page;
 	while (running) {
-		std::string vid = youtube_video_id(input);
+		std::string vid = youtube_video_id(input), channelId;
 		if (vid.empty()) {
 			PostStatus(YOUTUBE, "YouTube: looking for live stream...");
-			if (http(running, youtube_live_url(input), page))
+			if (http(running, youtube_live_url(input), page)) {
 				vid = between(page, "<link rel=\"canonical\" href=\"https://www.youtube.com/watch?v=");
+				channelId = between(page, "\"channelId\":\"");
+			}
+		} else if (http(running, "https://www.youtube.com/watch?v=" + vid, page)) {
+			channelId = between(page, "\"channelId\":\"");
 		}
+		PostConfig("youtube", QString::fromStdString(channelId));
+
 		std::string cont, version;
 		if (!vid.empty() && http(running, "https://www.youtube.com/live_chat?is_popout=1&v=" + vid, page)) {
 			cont = between(page, "\"continuation\":\"");
@@ -309,29 +392,43 @@ void ChatDock::YouTubeLoop(std::string input)
 			for (auto action : chat["actions"].toArray()) {
 				auto item = action.toObject()["addChatItemAction"].toObject()["item"].toObject();
 				auto r = item["liveChatTextMessageRenderer"].toObject();
-				QString prefix;
+				QJsonObject msg{{"type", "msg"}, {"p", "yt"}};
 				if (r.isEmpty()) {
 					r = item["liveChatPaidMessageRenderer"].toObject();
 					if (r.isEmpty())
 						continue;
-					prefix = "<b style='color:#ffca28'>[" +
-						 r["purchaseAmountText"].toObject()["simpleText"].toString().toHtmlEscaped() +
-						 "]</b> ";
+					msg["amount"] = r["purchaseAmountText"].toObject()["simpleText"];
 				}
-				QString text;
+				QJsonArray parts;
 				for (auto run : r["message"].toObject()["runs"].toArray()) {
 					auto o = run.toObject();
-					if (o.contains("text")) {
-						text += o["text"].toString();
-					} else {
-						auto e = o["emoji"].toObject();
-						text += e["isCustomEmoji"].toBool() ? e["shortcuts"].toArray().first().toString()
-										    : e["emojiId"].toString();
-					}
+					auto e = o["emoji"].toObject();
+					if (o.contains("text"))
+						parts.append(QJsonObject{{"t", o["text"]}});
+					else if (e["isCustomEmoji"].toBool())
+						parts.append(QJsonObject{
+							{"e", e["image"].toObject()["thumbnails"].toArray().last().toObject()["url"]},
+							{"n", e["shortcuts"].toArray().first()}});
+					else
+						parts.append(QJsonObject{{"t", e["emojiId"]}});
+				}
+				QJsonArray badges;
+				for (auto b : r["authorBadges"].toArray()) {
+					auto br = b.toObject()["liveChatAuthorBadgeRenderer"].toObject();
+					auto thumbs = br["customThumbnail"].toObject()["thumbnails"].toArray();
+					if (!thumbs.isEmpty())
+						badges.append(QJsonObject{{"url", thumbs.last().toObject()["url"]},
+									  {"title", br["tooltip"]}});
+					else
+						badges.append(QJsonObject{{"icon", br["icon"].toObject()["iconType"]},
+									  {"title", br["tooltip"]}});
 				}
 				qint64 ts = r["timestampUsec"].toString().toLongLong() / 1000;
-				batch.push_back({ts, line(YOUTUBE, ts, r["authorName"].toObject()["simpleText"].toString(),
-							  "#ff8a80", prefix + text.toHtmlEscaped())});
+				msg["ts"] = ts;
+				msg["name"] = r["authorName"].toObject()["simpleText"];
+				msg["parts"] = parts;
+				msg["badges"] = badges;
+				batch.push_back({ts, compact(msg)});
 			}
 			Post(std::move(batch));
 
@@ -355,6 +452,40 @@ static void ws_send(HINTERNET ws, const std::string &text)
 	WinHttpWebSocketSend(ws, WINHTTP_WEB_SOCKET_UTF8_MESSAGE_BUFFER_TYPE, (PVOID)text.data(), (DWORD)text.size());
 }
 
+static QByteArray kick_message(const QJsonObject &d)
+{
+	static const QRegularExpression emote("\\[emote:(\\d+):([^\\]]+)\\]");
+	QString content = d["content"].toString();
+	QJsonArray parts;
+	qsizetype last = 0;
+	for (auto it = emote.globalMatch(content); it.hasNext();) {
+		auto m = it.next();
+		if (m.capturedStart() > last)
+			parts.append(QJsonObject{{"t", content.mid(last, m.capturedStart() - last)}});
+		parts.append(QJsonObject{{"e", "https://files.kick.com/emotes/" + m.captured(1) + "/fullsize"},
+					 {"n", m.captured(2)}});
+		last = m.capturedEnd();
+	}
+	if (last < content.size())
+		parts.append(QJsonObject{{"t", content.mid(last)}});
+
+	auto sender = d["sender"].toObject();
+	auto identity = sender["identity"].toObject();
+	QJsonArray badges;
+	for (auto b : identity["badges_v2"].toArray())
+		badges.append(QJsonObject{{"url", b.toObject()["image_url"]}, {"title", b.toObject()["name"]}});
+
+	return compact(QJsonObject{
+		{"type", "msg"},
+		{"p", "kick"},
+		{"ts", QDateTime::fromString(d["created_at"].toString(), Qt::ISODate).toMSecsSinceEpoch()},
+		{"name", sender["username"]},
+		{"color", identity["color"]},
+		{"badges", badges},
+		{"parts", parts},
+	});
+}
+
 // Kick chat comes over a public Pusher websocket. Its app key is handed out by web.kick.com, so ask for it.
 void ChatDock::KickLoop(std::string slug)
 {
@@ -371,6 +502,7 @@ void ChatDock::KickLoop(std::string slug)
 			nap(running, 30000);
 			continue;
 		}
+		PostConfig("kick", QString::number(channel["user_id"].toInteger()));
 
 		std::string key = "34bf7a0ff419a2a775b9", cluster = "us2"; // fallback, seen 2026-10
 		if (http(running,
@@ -406,7 +538,6 @@ void ChatDock::KickLoop(std::string slug)
 			kickSocket = ws;
 			ws_send(ws, "{\"event\":\"pusher:subscribe\",\"data\":{\"auth\":\"\",\"channel\":\"chatrooms." +
 					    std::to_string(chatroomId) + ".v2\"}}");
-			static const QRegularExpression emote("\\[emote:\\d+:([^\\]]+)\\]");
 			std::string msg;
 			char buf[16384];
 			while (running) {
@@ -429,12 +560,8 @@ void ChatDock::KickLoop(std::string slug)
 					PostStatus(KICK, "Kick: connected");
 				} else if (event == "App\\Events\\ChatMessageEvent") {
 					auto d = QJsonDocument::fromJson(ev["data"].toString().toUtf8()).object();
-					auto sender = d["sender"].toObject();
-					QColor color(sender["identity"].toObject()["color"].toString());
-					QString text = d["content"].toString().replace(emote, "\\1");
 					qint64 ts = QDateTime::fromString(d["created_at"].toString(), Qt::ISODate).toMSecsSinceEpoch();
-					Post({{ts, line(KICK, ts, sender["username"].toString(),
-							color.isValid() ? color.name() : "#53fc18", text.toHtmlEscaped())}});
+					Post({{ts, kick_message(d)}});
 				}
 			}
 		}

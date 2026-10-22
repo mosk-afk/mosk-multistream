@@ -1,0 +1,135 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Mosk Chat</title>
+<style>
+	:root { --size: 13px; }
+	html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; }
+	body { font: 400 var(--size)/1.5 "Segoe UI", system-ui, sans-serif; color: #efeff1; }
+	body.dock { background: #1f1f23; }
+	body.dock #chat { height: 100vh; overflow-y: auto; padding: 4px 6px; box-sizing: border-box; }
+	body.overlay { --size: 20px; font-weight: 600; }
+	body.overlay #chat { position: absolute; left: 0; right: 0; bottom: 0; padding: 8px; }
+	body.overlay .msg { text-shadow: 0 0 2px #000, 0 0 3px #000, 1px 1px 2px #000; }
+	.msg { padding: 2px 0; overflow-wrap: anywhere; transition: opacity 1s; }
+	.msg.fade { opacity: 0; }
+	.time { color: #8a8a8f; font-size: .85em; margin-right: 5px; }
+	.logo, .badge { height: 1.15em; width: auto; vertical-align: -.22em; margin-right: 4px; }
+	.icon { margin-right: 3px; }
+	.emote { height: 1.9em; vertical-align: middle; margin: -.35em 1px; }
+	.name { font-weight: 700; }
+	.amount { background: #ffca28; color: #000; text-shadow: none; border-radius: 4px; padding: 0 5px; margin-right: 4px; font-weight: 700; }
+</style>
+</head>
+<body>
+<div id="chat"></div>
+<script>
+// Query params: ?dock | ?overlay, &size=<px>, &fade=<seconds> (overlay hides messages after this long)
+const q = new URLSearchParams(location.search);
+const overlay = q.has('overlay');
+document.body.className = overlay ? 'overlay' : 'dock';
+if (q.get('size')) document.body.style.setProperty('--size', q.get('size') + 'px');
+const fade = +q.get('fade') || 0;
+const max = overlay ? 40 : 200;
+const chat = document.getElementById('chat');
+
+const LOGO = {
+	kick: '<svg class="logo" viewBox="0 0 24 24"><rect width="24" height="24" rx="5" fill="#53fc18"/><path d="M6 5h4.5v4h1.5V7h1.5V5H18v5h-1.5v1.5H15v1H16.5V14H18v5h-4.5v-2H12v-2h-1.5v4H6z" fill="#000"/></svg>',
+	yt: '<svg class="logo" viewBox="0 0 24 24"><rect x="1" y="4" width="22" height="16" rx="5" fill="#f00"/><path d="M10 8.5v7l6-3.5z" fill="#fff"/></svg>',
+};
+const YT_ICON = { MODERATOR: '🔧', VERIFIED: '✔️', OWNER: '👑' };
+const YT_COLOR = { OWNER: '#ffd600', MODERATOR: '#5e84f1' };
+
+// 7TV: global set always, channel sets once the plugin tells us the Kick user id / YouTube channel id.
+const seventv = new Map();
+const loaded = new Set();
+async function load7tv(url) {
+	if (loaded.has(url)) return;
+	loaded.add(url);
+	try {
+		const j = await (await fetch(url)).json();
+		for (const e of (j.emote_set || j).emotes || [])
+			seventv.set(e.name, 'https:' + e.data.host.url + '/2x.webp');
+	} catch (e) {}
+}
+load7tv('https://7tv.io/v3/emote-sets/global');
+
+function img(cls, src, title) {
+	const i = document.createElement('img');
+	i.className = cls;
+	i.src = src;
+	i.alt = i.title = title || '';
+	return i;
+}
+
+function span(cls, text) {
+	const s = document.createElement('span');
+	s.className = cls;
+	s.textContent = text;
+	return s;
+}
+
+function render(m) {
+	const d = document.createElement('div');
+	d.className = 'msg';
+	d.dataset.ts = m.ts;
+	if (!overlay) {
+		const t = new Date(m.ts);
+		d.append(span('time', String(t.getHours()).padStart(2, '0') + ':' + String(t.getMinutes()).padStart(2, '0')));
+	}
+	d.insertAdjacentHTML('beforeend', LOGO[m.p]);
+
+	let color = m.color && CSS.supports('color', m.color) ? m.color : '#e0e0e0';
+	for (const b of m.badges || []) {
+		if (b.url) {
+			d.append(img('badge', b.url, b.title));
+			if (m.p === 'yt') color = '#2ba640'; // member
+		} else if (YT_ICON[b.icon]) {
+			d.append(span('icon', YT_ICON[b.icon]));
+			color = YT_COLOR[b.icon] || color;
+		}
+	}
+	if (m.amount) d.append(span('amount', m.amount));
+	const name = span('name', m.name);
+	name.style.color = color;
+	d.append(name, ': ');
+
+	for (const p of m.parts || []) {
+		if (p.e) {
+			d.append(img('emote', p.e, p.n));
+			continue;
+		}
+		for (const word of p.t.split(/(\s+)/)) {
+			if (seventv.has(word)) d.append(img('emote', seventv.get(word), word));
+			else d.append(word);
+		}
+	}
+	return d;
+}
+
+function add(m) {
+	const atBottom = chat.scrollTop + chat.clientHeight >= chat.scrollHeight - 30;
+	const node = render(m);
+	let before = null; // keep both platforms in time order
+	for (let c = chat.lastElementChild; c && +c.dataset.ts > m.ts; c = c.previousElementSibling) before = c;
+	chat.insertBefore(node, before);
+	while (chat.children.length > max) chat.firstElementChild.remove();
+	if (fade) setTimeout(() => node.classList.add('fade'), fade * 1000);
+	if (!overlay && atBottom) chat.scrollTop = chat.scrollHeight;
+}
+
+const events = new EventSource('/events');
+events.onopen = () => chat.replaceChildren(); // the plugin resends history on every (re)connect
+events.onmessage = e => {
+	const m = JSON.parse(e.data);
+	if (m.type === 'msg') add(m);
+	else if (m.type === 'clear') chat.replaceChildren();
+	else if (m.type === 'config') {
+		if (m.kick) load7tv('https://7tv.io/v3/users/kick/' + m.kick);
+		if (m.youtube) load7tv('https://7tv.io/v3/users/youtube/' + m.youtube);
+	}
+};
+</script>
+</body>
+</html>
