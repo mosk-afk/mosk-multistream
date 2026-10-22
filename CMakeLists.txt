@@ -46,6 +46,8 @@ if(BUILD_OUT_OF_TREE)
   find_package(CURL REQUIRED)
 endif()
 target_link_libraries(${PROJECT_NAME} PRIVATE CURL::libcurl)
+# ponytail: chat dock uses WinHTTP websockets, so this fork is Windows-only
+target_link_libraries(${PROJECT_NAME} PRIVATE winhttp)
 
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/version.h.in ${CMAKE_CURRENT_SOURCE_DIR}/version.h)
 
@@ -59,6 +61,8 @@ target_sources(${PROJECT_NAME} PRIVATE
   output-dialog.cpp
   stream-key-input.cpp
   multistream.cpp
+  chat-dock.cpp
+  chat-dock.hpp
   file-updater.c
 	resources.qrc
 	config-dialog.hpp
