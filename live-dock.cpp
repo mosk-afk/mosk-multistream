@@ -273,21 +273,17 @@ LiveDock::LiveDock(QWidget *parent, ChatDock *chat_, MultistreamDock *multistrea
 	FollowAccounts();
 }
 
-// Off air, chat follows the linked channels (ticked ones first); Go Live points it at the live broadcast instead.
+// Off air, chat follows every ticked channel (all linked ones if none are ticked); Go Live points it at the
+// live broadcasts instead.
 void LiveDock::FollowAccounts()
 {
 	if (accounts.empty() || obs_frontend_streaming_active())
 		return;
-	QString yt, kick;
-	for (int pass = 0; pass < 2; pass++)
-		for (auto &a : accounts) {
-			if (pass == 0 && !a.live)
-				continue;
-			if (a.platform == "yt" && yt.isEmpty())
-				yt = a.channel;
-			if (a.platform == "kick" && kick.isEmpty())
-				kick = a.channel;
-		}
+	bool anyTicked = std::any_of(accounts.begin(), accounts.end(), [](const Account &a) { return a.live; });
+	QStringList yt, kick;
+	for (auto &a : accounts)
+		if (a.live || !anyTicked)
+			(a.platform == "yt" ? yt : kick) << a.channel;
 	chat->SetChannels(yt, kick);
 }
 
@@ -679,12 +675,8 @@ void LiveDock::GoLive()
 						multistream->SetOutputActive(name.c_str(), true);
 				}
 
-				for (auto &a : selected) {
-					if (a.platform == "yt" && chatYt.isEmpty())
-						chatYt = a.broadcastId;
-					if (a.platform == "kick" && chatKick.isEmpty())
-						chatKick = a.channel;
-				}
+				for (auto &a : selected) // the new broadcast id also covers unlisted streams
+					(a.platform == "yt" ? chatYt : chatKick) << (a.platform == "yt" ? a.broadcastId : a.channel);
 				chat->SetChannels(chatYt, chatKick);
 
 				if (adding) {

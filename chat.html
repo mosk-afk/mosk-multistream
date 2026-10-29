@@ -19,6 +19,9 @@
 	.icon { margin-right: 3px; }
 	.emote { height: 1.9em; vertical-align: middle; margin: -.35em 1px; }
 	.name { font-weight: 700; }
+	.ch { display: none; }
+	body.multi-yt .ch-yt, body.multi-kick .ch-kick { display: inline; } /* only needed to tell same-platform channels apart */
+	.ch { font-size: .75em; font-weight: 600; color: #a0a0a8; background: rgba(255, 255, 255, .08); border-radius: 3px; padding: 0 4px; margin-right: 4px; vertical-align: .1em; }
 	.amount { background: #ffca28; color: #000; text-shadow: none; border-radius: 4px; padding: 0 5px; margin-right: 4px; font-weight: 700; }
 </style>
 </head>
@@ -33,6 +36,7 @@ if (q.get('size')) document.body.style.setProperty('--size', q.get('size') + 'px
 const fade = +q.get('fade') || 0;
 const max = overlay ? 40 : 200;
 const chat = document.getElementById('chat');
+const channels = {}; // platform -> Set of channel names seen
 
 const LOGO = {
 	kick: '<svg class="logo" viewBox="0 0 24 24"><rect width="24" height="24" rx="5" fill="#53fc18"/><path d="M6 5h4.5v4h1.5V7h1.5V5H18v5h-1.5v1.5H15v1H16.5V14H18v5h-4.5v-2H12v-2h-1.5v4H6z" fill="#000"/></svg>',
@@ -79,6 +83,12 @@ function render(m) {
 		d.append(span('time', String(t.getHours()).padStart(2, '0') + ':' + String(t.getMinutes()).padStart(2, '0')));
 	}
 	d.insertAdjacentHTML('beforeend', LOGO[m.p]);
+	if (m.ch) { // which followed channel this came from, shown once a platform has more than one
+		d.append(span('ch ch-' + m.p, m.ch));
+		const seen = channels[m.p] || (channels[m.p] = new Set());
+		seen.add(m.ch);
+		if (seen.size > 1) document.body.classList.add('multi-' + m.p);
+	}
 
 	let color = m.color && CSS.supports('color', m.color) ? m.color : '#e0e0e0';
 	for (const b of m.badges || []) {
@@ -120,14 +130,19 @@ function add(m) {
 }
 
 const events = new EventSource('/events');
-events.onopen = () => chat.replaceChildren(); // the plugin resends history on every (re)connect
+function reset() {
+	chat.replaceChildren();
+	for (const p in channels) delete channels[p];
+	document.body.classList.remove('multi-yt', 'multi-kick');
+}
+events.onopen = reset; // the plugin resends history on every (re)connect
 events.onmessage = e => {
 	const m = JSON.parse(e.data);
 	if (m.type === 'msg') add(m);
-	else if (m.type === 'clear') chat.replaceChildren();
+	else if (m.type === 'clear') reset();
 	else if (m.type === 'config') {
-		if (m.kick) load7tv('https://7tv.io/v3/users/kick/' + m.kick);
-		if (m.youtube) load7tv('https://7tv.io/v3/users/youtube/' + m.youtube);
+		for (const id of m.kick || []) load7tv('https://7tv.io/v3/users/kick/' + id);
+		for (const id of m.youtube || []) load7tv('https://7tv.io/v3/users/youtube/' + id);
 	}
 };
 </script>

@@ -71,7 +71,7 @@ private:
 	QString pendingState[2], pendingVerifier[2]; // OAuth in flight, indexed yt=0 kick=1
 	std::vector<std::string> startedOutputs;     // Multistream outputs we started, stopped on End
 	QSet<QString> liveIds;                       // "platform:channel" of accounts streaming right now
-	QString chatYt, chatKick;                    // what the chat dock is following
+	QStringList chatYt, chatKick;                // what the chat dock is following while live
 	bool waitingForMain = false;
 
 	std::thread worker;

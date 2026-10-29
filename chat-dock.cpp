@@ -19,8 +19,6 @@
 
 #define MAX_HISTORY 100
 
-enum { YOUTUBE = 0, KICK = 1 };
-
 // GET, or POST when json_body is set. Aborts as soon as running goes false.
 static bool http(std::atomic<bool> &running, const std::string &url, std::string &out, const std::string &json_body = "")
 {
@@ -89,9 +87,9 @@ static std::string overlay_url(const char *mode)
 ChatDock::ChatDock(QWidget *parent) : QWidget(parent)
 {
 	ytEdit = new QLineEdit;
-	ytEdit->setPlaceholderText("YouTube: @channel or video link");
+	ytEdit->setPlaceholderText("YouTube: @channel or video link, comma separated");
 	kickEdit = new QLineEdit;
-	kickEdit->setPlaceholderText("Kick: username");
+	kickEdit->setPlaceholderText("Kick: usernames, comma separated");
 	connectButton = new QPushButton("Connect");
 	statusLabel = new QLabel;
 	statusLabel->setWordWrap(true);
@@ -209,44 +207,49 @@ void ChatDock::Start()
 	history.clear();
 	config = QJsonObject();
 	Broadcast(R"({"type":"clear"})");
-	status[YOUTUBE].clear();
-	status[KICK].clear();
+	status.clear();
 	running = true;
 
-	std::string yt = ytEdit->text().trimmed().toStdString();
-	std::string kick = kickEdit->text().trimmed().toLower().toStdString();
-	if (kick.find('/') != std::string::npos) // pasted https://kick.com/name
-		kick = kick.substr(kick.find_last_of('/') + 1);
-	if (!yt.empty())
-		ytThread = std::thread(&ChatDock::YouTubeLoop, this, yt);
-	if (!kick.empty())
-		kickThread = std::thread(&ChatDock::KickLoop, this, kick);
+	for (auto &yt : ytEdit->text().split(',', Qt::SkipEmptyParts))
+		if (!yt.trimmed().isEmpty())
+			threads.emplace_back(&ChatDock::YouTubeLoop, this, yt.trimmed().toStdString());
+	for (auto &k : kickEdit->text().split(',', Qt::SkipEmptyParts)) {
+		std::string kick = k.trimmed().toLower().toStdString();
+		if (kick.find('/') != std::string::npos) // pasted https://kick.com/name
+			kick = kick.substr(kick.find_last_of('/') + 1);
+		if (!kick.empty())
+			threads.emplace_back(&ChatDock::KickLoop, this, kick);
+	}
 
 	ytEdit->setEnabled(false);
 	kickEdit->setEnabled(false);
 	connectButton->setText("Disconnect");
 }
 
-void ChatDock::SetChannels(const QString &youtube, const QString &kick)
+void ChatDock::SetChannels(const QStringList &youtube, const QStringList &kick)
 {
-	if (running && ytEdit->text() == youtube && kickEdit->text() == kick)
+	QString yt = youtube.join(", "), k = kick.join(", ");
+	if (running && ytEdit->text() == yt && kickEdit->text() == k)
 		return;
 	if (running)
 		Stop();
-	ytEdit->setText(youtube);
-	kickEdit->setText(kick);
+	ytEdit->setText(yt);
+	kickEdit->setText(k);
 	Start();
 }
 
 void ChatDock::Stop()
 {
 	running = false;
-	if (HINTERNET ws = kickSocket.exchange(nullptr))
-		WinHttpCloseHandle(ws); // unblocks WinHttpWebSocketReceive
-	if (ytThread.joinable())
-		ytThread.join();
-	if (kickThread.joinable())
-		kickThread.join();
+	{
+		std::lock_guard lock(socketsMutex);
+		for (auto ws : kickSockets)
+			WinHttpCloseHandle(ws); // unblocks WinHttpWebSocketReceive
+		kickSockets.clear();
+	}
+	for (auto &t : threads)
+		t.join();
+	threads.clear();
 
 	ytEdit->setEnabled(true);
 	kickEdit->setEnabled(true);
@@ -305,9 +308,9 @@ void ChatDock::Post(std::vector<ChatMsg> batch)
 		this, [this, batch = std::move(batch)]() mutable { AddMessages(std::move(batch)); }, Qt::QueuedConnection);
 }
 
-void ChatDock::PostStatus(int platform, QString text)
+void ChatDock::PostStatus(QString key, QString text)
 {
-	QMetaObject::invokeMethod(this, [this, platform, text] { SetStatus(platform, text); }, Qt::QueuedConnection);
+	QMetaObject::invokeMethod(this, [this, key, text] { SetStatus(key, text); }, Qt::QueuedConnection);
 }
 
 void ChatDock::PostConfig(QString key, QString value)
@@ -315,23 +318,21 @@ void ChatDock::PostConfig(QString key, QString value)
 	QMetaObject::invokeMethod(this, [this, key, value] { SetConfig(key, value); }, Qt::QueuedConnection);
 }
 
-void ChatDock::SetStatus(int platform, const QString &text)
+void ChatDock::SetStatus(const QString &key, const QString &text)
 {
 	if (!running)
 		return;
-	status[platform] = text;
-	QStringList parts;
-	for (auto &s : status)
-		if (!s.isEmpty())
-			parts << s;
-	statusLabel->setText(parts.join("  ·  "));
+	status[key] = text;
+	statusLabel->setText(QStringList(status.values()).join("  ·  "));
 }
 
 void ChatDock::SetConfig(const QString &key, const QString &value)
 {
-	if (!running || value.isEmpty() || config[key].toString() == value)
+	QJsonArray ids = config[key].toArray();
+	if (!running || value.isEmpty() || ids.contains(value))
 		return;
-	config[key] = value;
+	ids.append(value);
+	config[key] = ids;
 	QJsonObject c = config;
 	c["type"] = "config";
 	Broadcast(compact(c));
@@ -357,10 +358,12 @@ void ChatDock::AddMessages(std::vector<ChatMsg> batch)
 void ChatDock::YouTubeLoop(std::string input)
 {
 	std::string page;
+	QString key = "yt:" + QString::fromStdString(input);
+	QString name = QString::fromStdString(input); // replaced by the channel's display name once we see it
 	while (running) {
 		std::string vid = youtube_video_id(input), channelId;
 		if (vid.empty()) {
-			PostStatus(YOUTUBE, "YouTube: looking for live stream...");
+			PostStatus(key, "YouTube " + name + ": looking for live stream...");
 			if (http(running, youtube_live_url(input), page)) {
 				vid = between(page, "<link rel=\"canonical\" href=\"https://www.youtube.com/watch?v=");
 				channelId = between(page, "\"channelId\":\"");
@@ -368,6 +371,12 @@ void ChatDock::YouTubeLoop(std::string input)
 		} else if (http(running, "https://www.youtube.com/watch?v=" + vid, page)) {
 			channelId = between(page, "\"channelId\":\"");
 		}
+		// watch page when live, channel page (og:title) when not
+		std::string owner = between(page, "\"ownerChannelName\":\"");
+		if (owner.empty())
+			owner = between(page, "<meta property=\"og:title\" content=\"");
+		if (!owner.empty())
+			name = QJsonDocument::fromJson(QByteArray::fromStdString("[\"" + owner + "\"]")).array().first().toString(QString::fromStdString(owner));
 		PostConfig("youtube", QString::fromStdString(channelId));
 
 		std::string cont, version;
@@ -376,11 +385,11 @@ void ChatDock::YouTubeLoop(std::string input)
 			version = between(page, "\"clientVersion\":\"");
 		}
 		if (cont.empty()) {
-			PostStatus(YOUTUBE, "YouTube: offline (retrying)");
+			PostStatus(key, "YouTube " + name + ": offline (retrying)");
 			nap(running, 30000);
 			continue;
 		}
-		PostStatus(YOUTUBE, "YouTube: connected");
+		PostStatus(key, "YouTube " + name + ": connected");
 
 		while (running && !cont.empty()) {
 			std::string body = "{\"context\":{\"client\":{\"clientName\":\"WEB\",\"clientVersion\":\"" + version +
@@ -427,6 +436,7 @@ void ChatDock::YouTubeLoop(std::string input)
 				}
 				qint64 ts = r["timestampUsec"].toString().toLongLong() / 1000;
 				msg["ts"] = ts;
+				msg["ch"] = name;
 				msg["name"] = r["authorName"].toObject()["simpleText"];
 				msg["parts"] = parts;
 				msg["badges"] = badges;
@@ -454,7 +464,7 @@ static void ws_send(HINTERNET ws, const std::string &text)
 	WinHttpWebSocketSend(ws, WINHTTP_WEB_SOCKET_UTF8_MESSAGE_BUFFER_TYPE, (PVOID)text.data(), (DWORD)text.size());
 }
 
-static QByteArray kick_message(const QJsonObject &d)
+static QByteArray kick_message(const QJsonObject &d, const QString &channel)
 {
 	static const QRegularExpression emote("\\[emote:(\\d+):([^\\]]+)\\]");
 	QString content = d["content"].toString();
@@ -480,6 +490,7 @@ static QByteArray kick_message(const QJsonObject &d)
 	return compact(QJsonObject{
 		{"type", "msg"},
 		{"p", "kick"},
+		{"ch", channel},
 		{"ts", QDateTime::fromString(d["created_at"].toString(), Qt::ISODate).toMSecsSinceEpoch()},
 		{"name", sender["username"]},
 		{"color", identity["color"]},
@@ -492,21 +503,24 @@ static QByteArray kick_message(const QJsonObject &d)
 void ChatDock::KickLoop(std::string slug)
 {
 	std::string page;
+	QString key = "kick:" + QString::fromStdString(slug);
+	QString name = QString::fromStdString(slug);
 	while (running) {
-		PostStatus(KICK, "Kick: connecting...");
+		PostStatus(key, "Kick " + name + ": connecting...");
 		QJsonObject channel;
 		if (http(running, "https://kick.com/api/v2/channels/" + slug, page))
 			channel = json(page);
 		qint64 channelId = channel["id"].toInteger();
 		qint64 chatroomId = channel["chatroom"].toObject()["id"].toInteger();
 		if (!chatroomId) {
-			PostStatus(KICK, "Kick: channel not found (retrying)");
+			PostStatus(key, "Kick " + name + ": channel not found (retrying)");
 			nap(running, 30000);
 			continue;
 		}
+		name = channel["user"].toObject()["username"].toString(name);
 		PostConfig("kick", QString::number(channel["user_id"].toInteger()));
 
-		std::string key = "34bf7a0ff419a2a775b9", cluster = "us2"; // fallback, seen 2026-10
+		std::string appKey = "34bf7a0ff419a2a775b9", cluster = "us2"; // fallback, seen 2026-10
 		if (http(running,
 			 "https://web.kick.com/api/v1/realtime/channels/" + std::to_string(channelId) + "/chat/connection",
 			 page,
@@ -514,7 +528,7 @@ void ChatDock::KickLoop(std::string slug)
 			for (auto c : json(page)["data"].toObject()["connections"].toArray()) {
 				auto creds = c.toObject()["credentials"].toObject();
 				if (c.toObject()["provider"].toString() == "pusher" && !creds["app_key"].toString().isEmpty()) {
-					key = creds["app_key"].toString().toStdString();
+					appKey = creds["app_key"].toString().toStdString();
 					cluster = creds["cluster"].toString().toStdString();
 				}
 			}
@@ -525,7 +539,7 @@ void ChatDock::KickLoop(std::string slug)
 							  INTERNET_DEFAULT_HTTPS_PORT, 0)
 					 : nullptr;
 		HINTERNET req = conn ? WinHttpOpenRequest(conn, L"GET",
-							  wide("/app/" + key + "?protocol=7&client=js&version=8.4.0&flash=false").c_str(),
+							  wide("/app/" + appKey + "?protocol=7&client=js&version=8.4.0&flash=false").c_str(),
 							  nullptr, nullptr, nullptr, WINHTTP_FLAG_SECURE)
 				     : nullptr;
 		HINTERNET ws = nullptr;
@@ -537,7 +551,15 @@ void ChatDock::KickLoop(std::string slug)
 			WinHttpCloseHandle(req);
 
 		if (ws) {
-			kickSocket = ws;
+			std::lock_guard lock(socketsMutex);
+			if (running) {
+				kickSockets.insert(ws);
+			} else { // Stop() already ran, nobody would close it
+				WinHttpCloseHandle(ws);
+				ws = nullptr;
+			}
+		}
+		if (ws) {
 			ws_send(ws, "{\"event\":\"pusher:subscribe\",\"data\":{\"auth\":\"\",\"channel\":\"chatrooms." +
 					    std::to_string(chatroomId) + ".v2\"}}");
 			std::string msg;
@@ -559,23 +581,24 @@ void ChatDock::KickLoop(std::string slug)
 				if (event == "pusher:ping") {
 					ws_send(ws, "{\"event\":\"pusher:pong\",\"data\":{}}");
 				} else if (event == "pusher_internal:subscription_succeeded") {
-					PostStatus(KICK, "Kick: connected");
+					PostStatus(key, "Kick " + name + ": connected");
 				} else if (event == "App\\Events\\ChatMessageEvent") {
 					auto d = QJsonDocument::fromJson(ev["data"].toString().toUtf8()).object();
 					qint64 ts = QDateTime::fromString(d["created_at"].toString(), Qt::ISODate).toMSecsSinceEpoch();
-					Post({{ts, kick_message(d)}});
+					Post({{ts, kick_message(d, name)}});
 				}
 			}
+			std::lock_guard lock(socketsMutex);
+			if (kickSockets.erase(ws)) // otherwise Stop() closed it already
+				WinHttpCloseHandle(ws);
 		}
-		if (HINTERNET h = kickSocket.exchange(nullptr))
-			WinHttpCloseHandle(h);
 		if (conn)
 			WinHttpCloseHandle(conn);
 		if (session)
 			WinHttpCloseHandle(session);
 
 		if (running) {
-			PostStatus(KICK, "Kick: disconnected (retrying)");
+			PostStatus(key, "Kick " + name + ": disconnected (retrying)");
 			nap(running, 5000);
 		}
 	}
